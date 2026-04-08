@@ -1,0 +1,9 @@
+{
+  "best_val_f1": 0.23047619047619045,
+  "final_val_loss": 0.11445847153663635,
+  "final_val_f1": 0.10909090909090909,
+  "num_train": 116,
+  "num_val": 12,
+  "num_epochs": 2,
+  "checkpoint": "outputs/checkpoints/best_fold0.pt"
+}

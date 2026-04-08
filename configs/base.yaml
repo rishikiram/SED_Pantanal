@@ -1,0 +1,39 @@
+paths:
+  data_root: data/birdclef-2026
+  cache_dir: cache
+  output_dir: outputs
+
+audio:
+  sample_rate: 32000
+  window_duration: 5.0
+  n_fft: 1024
+  hop_length: 320
+  n_mels: 128
+  fmin: 40
+  fmax: 15000
+  top_db: 80.0
+
+model:
+  backbone: efficientnet_b0
+  backbone_pretrained: true
+  in_chans: 1
+  rnn_type: gru
+  rnn_hidden_dim: 256
+  rnn_num_layers: 2
+  rnn_bidirectional: true
+  rnn_dropout: 0.3
+  classifier_dropout: 0.3
+  num_classes: 234
+
+training:
+  batch_size: 32
+  pretrain_clip_epochs: 5
+  num_epochs: 15
+  lr: 1.0e-4
+  backbone_lr_multiplier: 0.1
+  weight_decay: 1.0e-2
+  loss: focal_bce
+  focal_gamma: 2.0
+  grad_clip_norm: 5.0
+  num_folds: 5
+  seed: 42
