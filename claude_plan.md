@@ -400,21 +400,35 @@ Report mean ± std across folds; use all 5 models for the final ensemble.
 
 ## Implementation Order
 
+### Phase 1 — Minimal Working Product (first submission)
+Goal: train on clips, run inference on test soundscapes, produce a valid submission CSV.
+
 1. `src/config.py` + `configs/base.yaml`
 2. `src/utils/label_encoder.py` — verify all 234 species map correctly from both ID formats
 3. `src/data/audio_io.py` + `src/data/mel_transform.py` → shape `(1, 128, 500)` on a real clip
-4. `src/data/augmentations.py` — needed by both datasets before training
-5. `src/data/soundscape_dataset.py` → shapes `(1, 128, 500)`, `(234,)` per labeled window
-6. `src/data/clip_dataset.py` → shapes `(1, 128, 500)`, `(234,)`
-7. `src/data/combined_dataset.py` + `src/data/samplers.py` — interleave clips and soundscape windows for trainer
-8. `src/models/cnn_backbone.py` → verify `(B, C, H', T')` output with `global_pool=''`
-9. `src/models/rnn_head.py` → verify `(B, T', 234)` output from freq-pool → GRU → linear
-10. `src/models/rcnn_sed.py` → end-to-end: `(B, 1, 128, 500)` → `(B, T', 234)`
-11. `src/training/losses.py` → focal BCE on dummy data
-12. `src/evaluation/metrics.py` → segment-F1 + PSDS on dummy predictions
-13. `src/training/trainer.py` → smoke train 1 epoch on the ~1,478 labeled soundscape windows
-14. `src/inference/sliding_window.py` + `src/inference/predictor.py`
-15. `src/evaluation/threshold_search.py` → per-class threshold grid search on val fold
-16. `scripts/train_folds.py` → full 5-fold run
-17. `scripts/pseudo_label.py` → generate pseudo-labels for unlabeled soundscapes
-18. `src/inference/export_onnx.py` → ONNX export + parity check
+4. `src/data/clip_dataset.py` → shapes `(1, 128, 500)`, `(234,)`
+5. `src/models/cnn_backbone.py` → verify `(B, C, H', T')` output with `global_pool=''`
+6. `src/models/rnn_head.py` → verify `(B, T', 234)` output from freq-pool → GRU → linear
+7. `src/models/rcnn_sed.py` → end-to-end: `(B, 1, 128, 500)` → `(B, T', 234)`
+8. `src/training/losses.py` → focal BCE on dummy data
+9. `src/evaluation/metrics.py` → segment-F1 on dummy predictions (training signal only)
+10. `src/training/trainer.py` → Phase A: train on clips, smoke-test 1 epoch
+11. `src/inference/sliding_window.py` + `src/inference/predictor.py`
+12. `src/inference/postprocess.py` + `scripts/run_inference.py` → produce first submission CSV
+
+### Phase 2 — Soundscape Fine-tuning + CV
+Goal: Phase B fine-tuning on labeled soundscape windows; proper cross-validated evaluation.
+
+13. `src/data/soundscape_dataset.py` → shapes `(1, 128, 500)`, `(234,)` per labeled window
+14. `src/data/combined_dataset.py` + `src/data/samplers.py` — interleave clips and soundscape windows
+15. Update `src/training/trainer.py` → Phase B fine-tuning loop
+16. `src/evaluation/metrics.py` → add PSDS1/PSDS2 alongside segment-F1
+17. `src/evaluation/threshold_search.py` → per-class threshold grid search on val fold
+18. `scripts/train_folds.py` → full 5-fold run
+
+### Phase 3 — Augmentation + Pseudo-labeling
+Goal: squeeze performance with augmentation and the unlabeled soundscape pool.
+
+19. `src/data/augmentations.py` — waveform + spectrogram augmentations
+20. `scripts/pseudo_label.py` → generate pseudo-labels for ~10,500 unlabeled soundscapes
+21. `src/inference/export_onnx.py` → ONNX export + parity check
