@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from src.config import Config
 from src.evaluation.metrics import segment_f1
@@ -11,12 +12,13 @@ from src.training.losses import FocalBCELoss, compute_class_weights
 
 
 class Trainer:
-    def __init__(self, cfg: Config, model: Rcnnsed, device: torch.device):
+    def __init__(self, cfg: Config, model: Rcnnsed, device: torch.device, progress: bool = True):
         self.cfg = cfg
         self.model = model.to(device)
         self.device = device
         self.loss_fn = FocalBCELoss(gamma=cfg.training.focal_gamma)
         self.class_weights: torch.Tensor | None = None
+        self.progress = progress   # set False to silence all tqdm bars
 
     def set_class_weights(self, label_counts: torch.Tensor):
         self.class_weights = compute_class_weights(label_counts).to(self.device)
@@ -32,10 +34,11 @@ class Trainer:
             weight_decay=self.cfg.training.weight_decay,
         )
 
-    def train_epoch(self, loader: DataLoader, optimizer: torch.optim.Optimizer) -> float:
+    def train_epoch(self, loader: DataLoader, optimizer: torch.optim.Optimizer, epoch_desc: str = 'Train') -> float:
         self.model.train()
         total_loss = 0.0
-        for mels, labels in loader:
+        bar = tqdm(loader, desc=epoch_desc, leave=False, disable=not self.progress)
+        for mels, labels in bar:
             mels = mels.to(self.device)
             labels = labels.to(self.device)
 
@@ -46,6 +49,7 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.training.grad_clip_norm)
             optimizer.step()
             total_loss += loss.item()
+            bar.set_postfix(loss=f'{loss.item():.4f}')
 
         return total_loss / len(loader)
 
@@ -55,7 +59,8 @@ class Trainer:
         total_loss = 0.0
         all_probs, all_labels = [], []
 
-        for mels, labels in loader:
+        bar = tqdm(loader, desc='Val  ', leave=False, disable=not self.progress)
+        for mels, labels in bar:
             mels = mels.to(self.device)
             labels = labels.to(self.device)
 
@@ -66,6 +71,7 @@ class Trainer:
             probs = torch.sigmoid(logits).mean(dim=1)  # mean over T' → (B, C)
             all_probs.append(probs.cpu().numpy())
             all_labels.append(labels.cpu().numpy())
+            bar.set_postfix(loss=f'{loss.item():.4f}')
 
         probs_np = np.concatenate(all_probs, axis=0)
         labels_np = np.concatenate(all_labels, axis=0)
@@ -93,17 +99,17 @@ class Trainer:
             checkpoint_path = Path(checkpoint_dir) / f'best_fold{fold}.pt'
 
         for epoch in range(num_epochs):
-            train_loss = self.train_epoch(train_loader, optimizer)
+            train_loss = self.train_epoch(train_loader, optimizer, epoch_desc=f'Train {epoch+1}/{num_epochs}')
             scheduler.step()
 
             if val_loader is not None:
                 val_loss, val_f1 = self.eval_epoch(val_loader)
-                print(f'Epoch {epoch+1}/{num_epochs}  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  val_f1={val_f1:.4f}')
+                print(f'Epoch {epoch+1}/{num_epochs}  train={train_loss:.4f}  val={val_loss:.4f}  f1={val_f1:.4f}')
 
                 if val_f1 > best_f1 and checkpoint_path:
                     best_f1 = val_f1
                     torch.save(self.model.state_dict(), checkpoint_path)
             else:
-                print(f'Epoch {epoch+1}/{num_epochs}  train_loss={train_loss:.4f}')
+                print(f'Epoch {epoch+1}/{num_epochs}  train={train_loss:.4f}')
 
         return best_f1
