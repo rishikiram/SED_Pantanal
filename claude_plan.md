@@ -39,7 +39,7 @@ data -> birdclef-2026/           # symlink, NEVER WRITE HERE
 ## Directory Structure (all generated files outside `data/birdclef-2026/`)
 
 ```
-SEDpantanal/
+SED_Pantanal/
 ├── data -> birdclef-2026/       # READ-ONLY symlink
 │
 ├── cache/                       # generated, never commit large files
