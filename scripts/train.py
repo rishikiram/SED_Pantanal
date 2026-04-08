@@ -43,10 +43,24 @@ def make_splits(n: int, val_frac: float, seed: int) -> tuple[list[int], list[int
     return indices[n_val:], indices[:n_val]
 
 
-def compute_label_counts(dataset: ClipDataset) -> torch.Tensor:
-    counts = torch.zeros(dataset.num_classes)
-    for _, label in dataset:
-        counts += (label > 0).float()
+def compute_label_counts(train_csv: str, indices: list[int], enc: LabelEncoder) -> torch.Tensor:
+    """Count positive labels per class by reading the CSV directly — no audio loading."""
+    import ast
+    df = pd.read_csv(train_csv).iloc[indices]
+    counts = torch.zeros(enc.num_classes)
+    for _, row in df.iterrows():
+        try:
+            counts[enc.encode(str(row['primary_label']).strip())] += 1
+        except KeyError:
+            pass
+        try:
+            for lbl in ast.literal_eval(str(row.get('secondary_labels', '[]'))):
+                try:
+                    counts[enc.encode(str(lbl).strip())] += 1
+                except KeyError:
+                    pass
+        except (ValueError, SyntaxError):
+            pass
     return counts
 
 
@@ -92,7 +106,7 @@ def main():
 
     # --- Class weights from training set ---
     print('Computing class weights...')
-    label_counts = compute_label_counts(train_ds)
+    label_counts = compute_label_counts(train_csv, train_idx, enc)
     print(f'  Classes with ≥1 sample: {(label_counts > 0).sum().item()} / {enc.num_classes}')
 
     # --- Model ---
