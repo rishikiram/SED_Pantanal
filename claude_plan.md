@@ -45,7 +45,7 @@ SEDpantanal/
 ├── cache/                       # generated, never commit large files
 │   ├── mels/                    # precomputed mel spectrograms (.npy or .pt)
 │   │   ├── clips/               # one file per clip
-│   │   └── soundscapes/         # one file per soundscape (12 windows stacked)
+│   │   └── soundscapes/         # one file per soundscape window
 │   └── pseudo_labels/           # generated pseudo-label CSVs for unlabeled soundscapes
 │
 ├── outputs/                     # training artifacts
@@ -64,26 +64,26 @@ SEDpantanal/
 │   │   ├── audio_io.py          # torchaudio load, resample, mono downmix
 │   │   ├── mel_transform.py     # mel spectrogram + per-instance normalization
 │   │   ├── augmentations.py     # waveform + spectrogram augmentations
-│   │   ├── soundscape_dataset.py# labeled soundscapes → (12, 1, 128, T) + (12, 234)
-│   │   ├── clip_dataset.py      # train_audio clips → (1, 128, T) + (234,)
+│   │   ├── soundscape_dataset.py# labeled soundscape windows → (1, 128, 500) + (234,)
+│   │   ├── clip_dataset.py      # train_audio clips → (1, 128, 500) + (234,)
 │   │   ├── combined_dataset.py  # interleaves clip + soundscape loaders
 │   │   └── samplers.py          # WeightedRandomSampler for class imbalance
 │   ├── models/
 │   │   ├── cnn_backbone.py      # timm EfficientNet-B0 window encoder
-│   │   ├── rnn_head.py          # bidirectional GRU/LSTM over 12-window sequence
-│   │   └── rcnn_sed.py          # top-level: CNN → RNN → Linear(234)
+│   │   ├── rnn_head.py          # bidirectional GRU over T' time frames → (B, T', 234)
+│   │   └── rcnn_sed.py          # top-level: CNN → freq-pool → GRU → Linear(234)
 │   ├── training/
-│   │   ├── losses.py            # focal BCE with masked window loss
+│   │   ├── losses.py            # focal BCE with class weighting
 │   │   ├── trainer.py           # train/val loops
 │   │   ├── callbacks.py         # checkpointing, early stopping
-│   │   └── mixup.py             # waveform Mixup; soundscape-aware CutMix
+│   │   └── mixup.py             # waveform Mixup; CutMix
 │   ├── evaluation/
-│   │   ├── metrics.py           # ROC-AUC
+│   │   ├── metrics.py           # ROC-AUC, PSDS, F1
 │   │   └── threshold_search.py  # per-class threshold optimization on val fold
 │   ├── inference/
-│   │   ├── sliding_window.py    # infer over 1-2s windows, with ~50% overlap
+│   │   ├── sliding_window.py    # slice 60s audio into 12 non-overlapping 5s windows
 │   │   ├── predictor.py         # batch inference, 5-fold ensemble averaging
-│   │   ├── postprocess.py       # aggregate finer predictions into predections for every 5s window (per-class thresholding)
+│   │   ├── postprocess.py       # per-class thresholding → submission CSV
 │   │   └── export_onnx.py       # ONNX export + parity validation
 │   └── utils/
 │       ├── seed.py
@@ -115,43 +115,46 @@ SEDpantanal/
 
 ## Architecture
 
-The model processes an entire 1-minute soundscape as a **sequence of 12 windows**.
-Each window is encoded independently by the CNN; the RNN contextualizes across the sequence.
+The model takes a single **5-second window** and outputs frame-level species logits.
+The CNN extracts features while preserving the time axis; the GRU contextualizes across the ~T' time steps within that window; the classifier produces one prediction vector per frame.
+
+Frame-level outputs are mean-pooled to a single window-level prediction in postprocessing for submission.
+The 60s soundscape is never processed as a unit — the sliding window at inference produces independent 5s inputs.
 
 ```
-Input: (B, 12, 1, 128, 500)        # B soundscapes, 12 windows, (C=1, F=128, T=500)
+Input: (B, 1, 128, 500)            # B windows, mel spectrogram (C=1, F=128, T=500)
          │
-         ├─ Flatten windows into batch dim: (B×12, 1, 128, 500)
+       CNN Backbone                  # EfficientNet-B0, in_chans=1, global_pool=''
          │
-       CNN Backbone                  # EfficientNet-B0, in_chans=1
-         │
-         └─ (B×12, feature_dim)
+         └─ (B, C, H', T')          # spatial feature map after CNN strides (H'≈freq, T'≈time)
               │
-              ├─ Reshape to sequence: (B, 12, feature_dim)
+              ├─ Freq-pool: x.mean(dim=-2) → (B, C, T')
               │
-            Bidirectional GRU        # 2 layers, hidden=256
+            Permute → (B, T', C)
               │
-              └─ (B, 12, 256)
+            Bidirectional GRU        # 2 layers, hidden=256; sequence over T' time steps within window
+              │
+              └─ (B, T', 512)        # 2×256 from bidirectional
                    │
-                 Dropout + Linear(256, 234)
+              Dropout + Linear(512, 234)
                    │
-                   └─ (B, 12, 234)  # logits → sigmoid at inference
+                   └─ (B, T', 234)   # frame-level logits → sigmoid at inference
 ```
 
-Short clips are fed as T=1 sequences through the same forward path — no architecture branching.
+Clips and soundscape windows share the exact same forward path and input shape — no architecture branching.
 
 ### `src/models/cnn_backbone.py`
 - `timm.create_model('efficientnet_b0', pretrained=True, in_chans=1, num_classes=0, global_pool='')`
-- Adaptive average pool → `(B, feature_dim)` per window
+- Returns full spatial feature map `(B, C, H', T')`; frequency dimension pooled externally
 - Alternative: PANNs CNN10 (AudioSet pretrained) — more semantically aligned to wildlife audio
 
 ### `src/models/rnn_head.py`
-- `nn.GRU(input_size=feature_dim, hidden_size=256, num_layers=2, batch_first=True, bidirectional=True, dropout=0.3)`
-- Project from `2×256` → `256` via linear layer
-- Bidirectionality helps: context at t=30s resolves ambiguous detections at t=25s
+- `nn.GRU(input_size=C, hidden_size=256, num_layers=2, batch_first=True, bidirectional=True, dropout=0.3)`
+- Operates over T' time frames within the 5s window
+- `Linear(512, 234)` applied at every time step → `(B, T', 234)` frame-level logits
 
 ### `src/models/rcnn_sed.py`
-- Orchestrates CNN → RNN → classifier
+- Orchestrates CNN → freq-pool → GRU → classifier
 - Sigmoid applied at inference / in loss, not inside `forward`
 
 ---
@@ -163,7 +166,7 @@ Short clips are fed as T=1 sequences through the same forward path — no archit
 | Parameter | Value | Notes |
 |---|---|---|
 | `sample_rate` | 32000 | all audio pre-resampled |
-| `window_duration` | 2.0s | |
+| `window_duration` | 5s | |
 | `n_fft` | 1024 | |
 | `hop_length` | 320 | 10ms hop → 500 frames per 5s window |
 | `n_mels` | 128 | |
@@ -183,9 +186,9 @@ Short clips are fed as T=1 sequences through the same forward path — no archit
 
 ### `src/data/soundscape_dataset.py`
 - Reads `train_soundscapes_labels.csv`; parses semicolon-separated `primary_label` into multi-hot `(234,)` vector per window
-- Loads the full 60s waveform; slices into 12 non-overlapping 5s windows
-- Returns `mel: (12, 1, 128, 500)`, `labels: (12, 234)`, `mask: (12,)` (1 = annotated window)
-- Only ~123 soundscapes have labels — these are the primary supervised training examples
+- Slices each 60s waveform into non-overlapping 5s windows; emits **one dataset sample per labeled window**
+- Returns `mel: (1, 128, 500)`, `labels: (234,)` — same shape as `ClipDataset`; unannotated windows are excluded
+- Only ~123 soundscapes have labels → ~1,478 labeled 5s windows total
 
 ### `src/data/clip_dataset.py`
 - Reads `train.csv`; resolves `filename` against `data/birdclef-2026/train_audio/`
@@ -203,14 +206,14 @@ Short clips are fed as T=1 sequences through the same forward path — no archit
 - `BackgroundNoiseMix(snr_db_range=(5, 30), p=0.5)` — mix segments from the ~10,500 unlabeled soundscapes
 - `GainJitter(min_gain_db=-6, max_gain_db=6, p=0.3)`
 - `TimeShift(max_shift_sec=1.0, p=0.3)`
-- `Mixup(alpha=0.4, p=0.3)` — blend waveforms + labels; for soundscapes, blend matching window indices
+- `Mixup(alpha=0.4, p=0.3)` — blend waveforms + labels
 
 **Spectrogram-level (after mel):**
 - `SpecAugment(time_mask_max=50, freq_mask_max=15, n_time_masks=2, n_freq_masks=2, p=0.5)`
-- `CutMix(p=0.3)` — clips only; not applied to soundscape sequences (disrupts temporal structure)
+- `CutMix(p=0.3)`
 
 **Soundscape-specific:**
-- `WindowDropout(p_window=0.1)` — zero out a random window + mask it from loss
+- None — soundscape windows and clips share the same augmentation pipeline
 
 ---
 
@@ -219,15 +222,15 @@ Short clips are fed as T=1 sequences through the same forward path — no archit
 ### Two-Phase Training
 
 **Phase A — Clip pre-training (5 epochs):**
-- Train CNN backbone only on `ClipDataset` (T=1 sequences)
-- RNN weights not updated
-- Critical because only ~123 labeled soundscapes exist; clips provide most of the
+- Train full model (CNN+GRU+head) on `ClipDataset`
+- Critical because only ~1,478 labeled soundscape windows exist; clips provide most of the
   species-discriminative signal, especially for species with no soundscape annotations
 - LR: `1e-3` (head), `1e-4` (backbone)
 
-**Phase B — Full RCNN fine-tuning (10–15 epochs):**
-- Alternate batches: soundscapes (full RCNN, window-level loss) and clips (T=1, 3:1 ratio)
-- Differential LRs: backbone at `1e-5`, RNN+head at `1e-4`
+**Phase B — Fine-tuning on soundscape windows (10–15 epochs):**
+- Alternate batches: labeled soundscape windows and clips (3:1 clip ratio)
+- Clips and soundscape windows have identical shape `(1, 128, 500)` — no special handling needed
+- Differential LRs: backbone at `1e-5`, GRU+head at `1e-4`
 - Optimizer: `AdamW(weight_decay=1e-2)`
 - Scheduler: `CosineAnnealingWarmRestarts(T_0=5, T_mult=2)`
 - Mixed precision: `torch.cuda.amp.GradScaler`
@@ -244,8 +247,9 @@ Short clips are fed as T=1 sequences through the same forward path — no archit
 **Focal BCE (primary):**
 ```
 FocalBCELoss(alpha=0.25, gamma=2.0)
-# Per (window, species) element; masked by annotation mask before reduction
-loss = (focal_bce * class_weights * mask.unsqueeze(-1)).mean()
+# logits: (B, T', 234); labels: (B, 234) broadcast across T' frames
+# window-level label applied uniformly to all frames — weak supervision
+loss = (focal_bce * class_weights).mean()   # mean over (B, T', 234)
 ```
 
 Class weights: `weight_c = (N / (num_classes * count_c))^0.5`
@@ -256,9 +260,9 @@ Class weights: `weight_c = (N / (num_classes * count_c))^0.5`
 3. Augmentation multiplier: 3× for species with < 15 clips (some species have 0 clips)
 
 ### Cross-Validation (`scripts/train_folds.py`)
-- 5-fold stratified CV on the ~123 labeled soundscapes (split at soundscape level, never split windows)
-- With only ~123 labeled soundscapes, folds will be small (~25 val soundscapes each) —
-  report mean ± std PSDS across folds; final submission uses all 5 fold models ensembled
+- 5-fold stratified CV split at the **soundscape level** — all windows from the same soundscape stay in the same fold
+- ~123 soundscapes → ~25 val soundscapes (~295 val windows) per fold
+- Report mean ± std PSDS across folds; final submission uses all 5 fold models ensembled
 
 ---
 
@@ -284,23 +288,24 @@ Class weights: `weight_c = (N / (num_classes * count_c))^0.5`
 ## Inference Pipeline
 
 ### `src/inference/sliding_window.py`
-- 12 non-overlapping 5s windows from 60s audio: `[0–5, 5–10, ..., 55–60]`
-- Optional: 2.5s stride (24 windows, averaged) for smoother boundaries
+- Slices 60s audio into 12 non-overlapping 5s windows: `[0–5, 5–10, ..., 55–60]`
+- Each window returns a mel spectrogram `(1, 128, 500)` — same shape as training inputs
 
 ### `src/inference/predictor.py`
 ```python
 def predict_soundscape(audio_path) -> np.ndarray:
     # Returns: (12, 234) probability matrix
-    windows = sliding_window(audio_path)      # (12, 1, 128, 500)
-    mel_seq = stack(windows).unsqueeze(0)     # (1, 12, 1, 128, 500)
-    logits = model(mel_seq)                   # (1, 12, 234)
-    return torch.sigmoid(logits).squeeze(0).cpu().numpy()
+    windows = sliding_window(audio_path)        # list of 12 tensors (1, 128, 500)
+    batch = torch.stack(windows)                # (12, 1, 128, 500)
+    frame_probs = torch.sigmoid(model(batch))   # (12, T', 234) — frame-level
+    return frame_probs.mean(dim=1).cpu().numpy()# (12, 234) — mean-pool frames → window prediction
 ```
 - Ensemble: average sigmoid probabilities across 5 fold models before thresholding
 
 ### `src/inference/postprocess.py`
+- Mean-pool frame-level predictions over T' → `(12, 234)` window-level probabilities (done in predictor)
 - Apply per-class thresholds from `outputs/thresholds/`
-- **No temporal smoothing** — RNN already smooths; additional smoothing hurts event-based F1
+- **No additional temporal smoothing** — frame mean-pooling is sufficient; further smoothing blurs onset/offset boundaries
 - Output: `outputs/submissions/submission.csv` with `row_id` = `{filename_stem}_{end_time_sec}`
 
 ### Submission format (matches `sample_submission.csv`)
@@ -344,7 +349,7 @@ class ModelConfig:
 
 @dataclass
 class TrainingConfig:
-    batch_size: int = 8                 # soundscape batches (8 × 12 = 96 windows)
+    batch_size: int = 8                 # windows per batch (clips and soundscape windows mixed)
     clip_batch_size: int = 32
     soundscape_to_clip_ratio: int = 3
     pretrain_clip_epochs: int = 5
@@ -365,8 +370,8 @@ class TrainingConfig:
 
 ### 1. Only ~123 labeled soundscapes — clip pre-training is essential
 The ~35K clips in `train_audio/` are the primary source of species-level supervision.
-Without Phase A clip pre-training, the CNN backbone will not learn species-discriminative
-features before temporal training begins. This is more critical here than in typical SED tasks.
+Without Phase A clip pre-training, the model will not learn species-discriminative
+features before fine-tuning on the small soundscape window set. This is more critical here than in typical SED tasks.
 
 ### 2. Pseudo-labeling the ~10,500 unlabeled soundscapes
 This is the single highest-leverage improvement available. The unlabeled soundscapes are
@@ -380,8 +385,7 @@ Switch to PANNs CNN10 (AudioSet pretrained) if PSDS plateaus — PANNs features 
 semantically aligned to wildlife audio. `in_chans=1` preferred over 3-channel replication.
 
 ### 4. No postprocessing temporal smoothing
-The RNN learns implicit smoothing. Additional smoothing post-RNN blurs onset/offset boundaries
-and hurts event-based F1. Only apply smoothing for CNN-only baseline comparisons.
+Additional smoothing blurs onset/offset boundaries and hurts event-based F1.
 
 ### 5. Label encoding: integers vs eBird codes
 `train_soundscapes_labels.csv` uses integer `inat_taxon_id`; `sample_submission.csv` column
@@ -399,15 +403,18 @@ Report mean ± std across folds; use all 5 models for the final ensemble.
 1. `src/config.py` + `configs/base.yaml`
 2. `src/utils/label_encoder.py` — verify all 234 species map correctly from both ID formats
 3. `src/data/audio_io.py` + `src/data/mel_transform.py` → shape `(1, 128, 500)` on a real clip
-4. `src/data/soundscape_dataset.py` → shapes `(12, 1, 128, 500)`, `(12, 234)`, `(12,)` mask
-5. `src/data/clip_dataset.py` → shapes `(1, 128, 500)`, `(234,)`
-6. `src/models/cnn_backbone.py` → verify `(B, feature_dim)` output
-7. `src/models/rnn_head.py` → verify `(B, 12, 256)` output
-8. `src/models/rcnn_sed.py` → end-to-end: `(B, 12, 1, 128, 500)` → `(B, 12, 234)`
-9. `src/training/losses.py` → masked focal BCE on dummy data
-10. `src/training/trainer.py` → smoke train 1 epoch on the ~123 labeled soundscapes
-11. `src/evaluation/metrics.py` → segment-F1 + PSDS on dummy predictions
-12. `src/inference/predictor.py` + `src/inference/sliding_window.py`
-13. `scripts/train_folds.py` → full 5-fold run
-14. `scripts/pseudo_label.py` → generate pseudo-labels for unlabeled soundscapes
-15. `src/inference/export_onnx.py` → ONNX export + parity check
+4. `src/data/augmentations.py` — needed by both datasets before training
+5. `src/data/soundscape_dataset.py` → shapes `(1, 128, 500)`, `(234,)` per labeled window
+6. `src/data/clip_dataset.py` → shapes `(1, 128, 500)`, `(234,)`
+7. `src/data/combined_dataset.py` + `src/data/samplers.py` — interleave clips and soundscape windows for trainer
+8. `src/models/cnn_backbone.py` → verify `(B, C, H', T')` output with `global_pool=''`
+9. `src/models/rnn_head.py` → verify `(B, T', 234)` output from freq-pool → GRU → linear
+10. `src/models/rcnn_sed.py` → end-to-end: `(B, 1, 128, 500)` → `(B, T', 234)`
+11. `src/training/losses.py` → focal BCE on dummy data
+12. `src/evaluation/metrics.py` → segment-F1 + PSDS on dummy predictions
+13. `src/training/trainer.py` → smoke train 1 epoch on the ~1,478 labeled soundscape windows
+14. `src/inference/sliding_window.py` + `src/inference/predictor.py`
+15. `src/evaluation/threshold_search.py` → per-class threshold grid search on val fold
+16. `scripts/train_folds.py` → full 5-fold run
+17. `scripts/pseudo_label.py` → generate pseudo-labels for unlabeled soundscapes
+18. `src/inference/export_onnx.py` → ONNX export + parity check
