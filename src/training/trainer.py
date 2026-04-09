@@ -93,10 +93,10 @@ class Trainer:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=5, T_mult=2)
 
         best_f1 = 0.0
-        checkpoint_path = None
+        ckpt_dir = None
         if checkpoint_dir:
-            Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
-            checkpoint_path = Path(checkpoint_dir) / f'best_fold{fold}.pt'
+            ckpt_dir = Path(checkpoint_dir)
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
 
         for epoch in range(num_epochs):
             train_loss = self.train_epoch(train_loader, optimizer, epoch_desc=f'Train {epoch+1}/{num_epochs}')
@@ -105,11 +105,14 @@ class Trainer:
             if val_loader is not None:
                 val_loss, val_f1 = self.eval_epoch(val_loader)
                 print(f'Epoch {epoch+1}/{num_epochs}  train={train_loss:.4f}  val={val_loss:.4f}  f1={val_f1:.4f}')
-
-                if val_f1 > best_f1 and checkpoint_path:
+                if val_f1 > best_f1:
                     best_f1 = val_f1
-                    torch.save(self.model.state_dict(), checkpoint_path)
+                    if ckpt_dir:
+                        torch.save(self.model.state_dict(), ckpt_dir / f'best_fold{fold}.pt')
             else:
                 print(f'Epoch {epoch+1}/{num_epochs}  train={train_loss:.4f}')
+
+            if ckpt_dir:
+                torch.save(self.model.state_dict(), ckpt_dir / f'epoch{epoch+1}_fold{fold}.pt')
 
         return best_f1

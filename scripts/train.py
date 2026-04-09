@@ -32,7 +32,8 @@ def parse_args():
     p.add_argument('--val_split',  type=float, default=0.1,  help='Fraction of clips held out for validation')
     p.add_argument('--epochs',     type=int,   default=None, help='Override num_epochs from config')
     p.add_argument('--max_clips',  type=int,   default=None, help='Cap dataset size (for quick runs)')
-    p.add_argument('--num_workers',type=int,   default=0)
+    p.add_argument('--num_workers',   type=int,   default=0)
+    p.add_argument('--checkpoint_dir', default=None, help='Where to save checkpoints (default: outputs/checkpoints)')
     return p.parse_args()
 
 
@@ -119,7 +120,7 @@ def main():
     trainer.set_class_weights(label_counts)
 
     num_epochs = args.epochs or cfg.training.pretrain_clip_epochs
-    checkpoint_dir = f'{cfg.paths.output_dir}/checkpoints'
+    checkpoint_dir = args.checkpoint_dir or f'{cfg.paths.output_dir}/checkpoints'
 
     print(f'\nPhase A — clip pre-training for {num_epochs} epochs')
     print('-' * 60)
