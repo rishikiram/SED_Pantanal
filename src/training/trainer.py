@@ -19,6 +19,7 @@ class Trainer:
         self.loss_fn = FocalBCELoss(gamma=cfg.training.focal_gamma)
         self.class_weights: torch.Tensor | None = None
         self.progress = progress   # set False to silence all tqdm bars
+        self.scaler = torch.amp.GradScaler(device.type, enabled=device.type == 'cuda')
 
     def set_class_weights(self, label_counts: torch.Tensor):
         self.class_weights = compute_class_weights(label_counts).to(self.device)
@@ -39,15 +40,18 @@ class Trainer:
         total_loss = 0.0
         bar = tqdm(loader, desc=epoch_desc, leave=False, disable=not self.progress)
         for mels, labels in bar:
-            mels = mels.to(self.device)
-            labels = labels.to(self.device)
+            mels = mels.to(self.device, non_blocking=True)
+            labels = labels.to(self.device, non_blocking=True)
 
             optimizer.zero_grad()
-            logits = self.model(mels)           # (B, T', C)
-            loss = self.loss_fn(logits, labels, self.class_weights)
-            loss.backward()
+            with torch.autocast(self.device.type, enabled=self.device.type == 'cuda'):
+                logits = self.model(mels)           # (B, T', C)
+                loss = self.loss_fn(logits, labels, self.class_weights)
+            self.scaler.scale(loss).backward()
+            self.scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.training.grad_clip_norm)
-            optimizer.step()
+            self.scaler.step(optimizer)
+            self.scaler.update()
             total_loss += loss.item()
             bar.set_postfix(loss=f'{loss.item():.4f}')
 
@@ -61,11 +65,12 @@ class Trainer:
 
         bar = tqdm(loader, desc='Val  ', leave=False, disable=not self.progress)
         for mels, labels in bar:
-            mels = mels.to(self.device)
-            labels = labels.to(self.device)
+            mels = mels.to(self.device, non_blocking=True)
+            labels = labels.to(self.device, non_blocking=True)
 
-            logits = self.model(mels)           # (B, T', C)
-            loss = self.loss_fn(logits, labels, self.class_weights)
+            with torch.autocast(self.device.type, enabled=self.device.type == 'cuda'):
+                logits = self.model(mels)           # (B, T', C)
+                loss = self.loss_fn(logits, labels, self.class_weights)
             total_loss += loss.item()
 
             probs = torch.sigmoid(logits).mean(dim=1)  # mean over T' → (B, C)

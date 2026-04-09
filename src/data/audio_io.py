@@ -1,3 +1,4 @@
+import soundfile as sf
 import torch
 import torchaudio
 
@@ -7,7 +8,8 @@ def load_audio(path: str, target_sr: int = 32000) -> torch.Tensor:
 
     Returns: (1, N) float32 waveform tensor.
     """
-    waveform, sr = torchaudio.load(path)
+    data, sr = sf.read(path, dtype='float32', always_2d=True)  # (N, C)
+    waveform = torch.from_numpy(data.T)                         # (C, N)
     if sr != target_sr:
         waveform = torchaudio.functional.resample(waveform, sr, target_sr)
     if waveform.shape[0] > 1:
