@@ -13,6 +13,7 @@ def segment_f1(
     targets: (N, num_classes) — binary labels
     """
     preds = (probs >= threshold).astype(int)
+    targets = (targets > 0).astype(int)  # binarize: secondary labels (0.5) count as positive
     # Only score classes that appear in targets to avoid undefined F1
     active = targets.sum(axis=0) > 0
     if active.sum() == 0:
