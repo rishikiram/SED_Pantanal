@@ -416,6 +416,13 @@ Goal: train on clips, run inference on test soundscapes, produce a valid submiss
 11. `src/inference/sliding_window.py` + `src/inference/predictor.py`
 12. `src/inference/postprocess.py` + `scripts/run_inference.py` → produce first submission CSV
 
+### Phase 1.1 - Fixing ClipDataset
+- ClipDataset needs to be reworked. Right now, each audio clip is mel-transformed correctly, but only the first 500 frames (first 5s) are used. 
+- What should happend is that every (non-overlapping) 5s clip from each audio file should be used, not just the first 5s of each audio file. 
+- There should be 500 frames per data point, so for 5s of 32000 Hz audio, each frame should represent 320 samples (10ms) of audio. This is correrct right now and should be maintained.
+- Most likely a train_augmented.csv should be generated which has columns [idx, primary_label, time_start, duration, filename] where idx is a unique identifier and where filename is a foregn key linking to train.csv. 
+- A strategy for caching things to speed up data loading should be considered to see if it is necessary.
+
 ### Phase 2 — Soundscape Fine-tuning + CV
 Goal: Phase B fine-tuning on labeled soundscape windows; proper cross-validated evaluation.
 

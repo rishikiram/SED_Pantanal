@@ -17,6 +17,9 @@ class ClipDataset(Dataset):
 
     Primary label gets weight 1.0, secondary labels get weight 0.5.
     """
+    # This needs to be reworked. Right now, each audio clip is mel-transformed correctly, but only the first 500 frames (first 5s) are used. 
+    # What should happend is that every 5s clip should be used, not just the first 5s. 
+    # There should be 500 frames per data point, so for 5s of 32000 Hz audio, each frame should represent 320 samples (10ms) of audio.
 
     def __init__(
         self,

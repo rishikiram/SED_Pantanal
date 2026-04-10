@@ -15,7 +15,7 @@ class AudioConfig:
     sample_rate: int = 32000
     window_duration: float = 5.0
     n_fft: int = 1024
-    hop_length: int = 320
+    hop_length: int = 320 # equivalent to 10ms hop at 32kHz
     n_mels: int = 128
     fmin: int = 40
     fmax: int = 15000
@@ -23,11 +23,11 @@ class AudioConfig:
 
     @property
     def samples_per_window(self) -> int:
-        return int(self.sample_rate * self.window_duration)
+        return int(self.sample_rate * self.window_duration) # this is correct, its a fixed to 160,000
 
     @property
     def frames_per_window(self) -> int:
-        return int(self.samples_per_window / self.hop_length)
+        return int(self.samples_per_window / self.hop_length) # non overlapping frames, this is good. 160000 / 320 = 500 frames per window.
 
 
 @dataclass
