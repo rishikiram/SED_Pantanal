@@ -37,6 +37,7 @@ def parse_args():
     p.add_argument('--config',       default='configs/base.yaml')
     p.add_argument('--val_split',    type=float, default=0.1)
     p.add_argument('--max_clips',    type=int,   default=None)
+    p.add_argument('--n_eval_clips', type=int,   default=None, help='Cap number of validation clips (for quick runs)')
     p.add_argument('--num_workers',  type=int,   default=0)
     p.add_argument('--threshold',    type=float, default=0.5, help='Prediction threshold for F1')
     p.add_argument('--no_interactive', action='store_true', help='Skip interactive browser')
@@ -144,17 +145,32 @@ def interactive_browser(
             pass
 
         # Top-5 predictions
-        top5_idx = np.argsort(probs)[::-1][:5]
+        top_idx = np.argsort(probs)[::-1]
+        # top_idx = np.argsort(probs)[::-1][:100]
 
         print(f'\n  File       : {row["filename"]}')
         print(f'  True label : {gt_primary}' +
               (f'  (secondary: {", ".join(gt_secondary)})' if gt_secondary else ''))
+        # print(f'  Top-5 predictions (threshold={threshold}):')
+        # for rank, ci in enumerate(top_idx, 1):
+        #     species = enc.decode(ci)
+        #     marker  = '*' if probs[ci] >= threshold else ' '
+        #     is_gt   = ' [GT]' if (targets[ci] > 0) else ''
+        #     print(f'    {rank}. {marker} {species:<30s}  p={probs[ci]:.4f}{is_gt}')
+
+        # Bar-graph view of top-5 predictions
+        BAR_WIDTH  = 50
+        col_width  = max(len(enc.decode(ci)) for ci in top_idx)
         print(f'  Top-5 predictions (threshold={threshold}):')
-        for rank, ci in enumerate(top5_idx, 1):
-            species = enc.decode(ci)
-            marker  = '*' if probs[ci] >= threshold else ' '
-            is_gt   = ' [GT]' if (targets[ci] > 0) else ''
-            print(f'    {rank}. {marker} {species:<30s}  p={probs[ci]:.4f}{is_gt}')
+        for rank, ci in enumerate(top_idx, 1):
+            species    = enc.decode(ci)
+            p          = probs[ci]
+            filled     = int(round(p * BAR_WIDTH))
+            bar        = '█' * filled + '░' * (BAR_WIDTH - filled)
+            thresh_pos = int(round(threshold * BAR_WIDTH))
+            bar        = bar[:thresh_pos] + '|' + bar[thresh_pos + 1:]
+            is_gt      = ' [GT]' if (targets[ci] > 0) else ''
+            print(f'    {rank:3}. {species:<{col_width}s}  [{bar}]  {p:.3f}{is_gt}')
 
         audio_path = audio_root / row['filename']
         if audio_path.exists():
@@ -186,6 +202,11 @@ def main():
         n_total = min(n_total, args.max_clips)
 
     val_idx = make_val_indices(n_total, args.val_split, cfg.training.seed)
+    if args.n_eval_clips:
+        if args.n_eval_clips >= len(val_idx):
+            print(f'  n_eval_clips ({args.n_eval_clips}) >= total val clips ({len(val_idx)}) — using all val clips.')
+        else:
+            val_idx = val_idx[:args.n_eval_clips]
     print(f'Validation clips: {len(val_idx)}')
 
     audio_root = Path(f'{cfg.paths.data_root}/train_audio')
@@ -214,6 +235,19 @@ def main():
     print(f'  val_loss : {val_loss:.4f}')
     print(f'  val_f1   : {val_f1:.4f}  (threshold={args.threshold})')
     print(f'{"="*50}')
+
+    try:
+        import sounddevice as sd
+        sr = 44100
+        t  = np.linspace(0, 0.15, int(sr * 0.15), endpoint=False)
+        chime = (
+            0.4 * np.sin(2 * np.pi * 880 * t) * np.exp(-8 * t) +
+            0.3 * np.sin(2 * np.pi * 1320 * t) * np.exp(-8 * t)
+        ).astype(np.float32)
+        sd.play(chime, sr)
+        sd.wait()
+    except Exception:
+        pass
 
     if args.no_interactive:
         return
