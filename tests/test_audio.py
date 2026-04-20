@@ -86,3 +86,33 @@ def test_mel_shape_on_real_audio(audio_cfg):
     wav = pad_or_trim(wav, audio_cfg.samples_per_window, deterministic=True)
     mel = transform(wav)
     assert mel.shape == (1, 128, 500)
+
+
+@pytest.mark.slow
+def test_load_audio_offset_returns_correct_length(audio_cfg):
+    from src.data.audio_io import load_audio
+    wav = load_audio(SOUNDSCAPE_PATH, audio_cfg.sample_rate,
+                     offset_sec=10.0, duration_sec=5.0)
+    assert wav.shape[0] == 1
+    # Allow ±1 sample for rounding at native sample rate
+    assert abs(wav.shape[1] - audio_cfg.samples_per_window) <= 1
+
+
+@pytest.mark.slow
+def test_load_audio_different_offsets_differ(audio_cfg):
+    from src.data.audio_io import load_audio
+    wav0 = load_audio(SOUNDSCAPE_PATH, audio_cfg.sample_rate,
+                      offset_sec=0.0, duration_sec=5.0)
+    wav1 = load_audio(SOUNDSCAPE_PATH, audio_cfg.sample_rate,
+                      offset_sec=5.0, duration_sec=5.0)
+    assert not torch.allclose(wav0, wav1)
+
+
+@pytest.mark.slow
+def test_load_audio_zero_offset_matches_no_offset(audio_cfg):
+    from src.data.audio_io import load_audio
+    wav_default = load_audio(SOUNDSCAPE_PATH, audio_cfg.sample_rate,
+                             duration_sec=5.0)
+    wav_explicit = load_audio(SOUNDSCAPE_PATH, audio_cfg.sample_rate,
+                              offset_sec=0.0, duration_sec=5.0)
+    assert torch.allclose(wav_default, wav_explicit)

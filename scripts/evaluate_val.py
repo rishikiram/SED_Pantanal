@@ -31,13 +31,18 @@ from src.training.losses import FocalBCELoss
 from src.utils.label_encoder import LabelEncoder
 
 
+DEFAULT_WINDOWS_CSV = 'cache/train_clip_windows.csv'
+
+
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument('--checkpoint',   required=True,      help='Path to .pt checkpoint')
     p.add_argument('--config',       default='configs/base.yaml')
+    p.add_argument('--windows_csv',  default=DEFAULT_WINDOWS_CSV,
+                   help='Windows CSV from generate_clip_windows.py (must match training run)')
     p.add_argument('--val_split',    type=float, default=0.1)
     p.add_argument('--max_clips',    type=int,   default=None)
-    p.add_argument('--n_eval_clips', type=int,   default=None, help='Cap number of validation clips (for quick runs)')
+    p.add_argument('--n_eval_clips', type=int,   default=None, help='Cap number of validation windows (for quick runs)')
     p.add_argument('--num_workers',  type=int,   default=0)
     p.add_argument('--threshold',    type=float, default=0.5, help='Prediction threshold for F1')
     p.add_argument('--no_interactive', action='store_true', help='Skip interactive browser')
@@ -82,8 +87,8 @@ def run_eval(
     return total_loss / len(loader), f1, probs_np, labels_np
 
 
-def play_audio(path: Path):
-    """Play audio via sounddevice + soundfile (supports OGG/WAV/FLAC)."""
+def play_audio(path: Path, offset_sec: float = 0.0, duration_sec: float = 5.0):
+    """Play a 5s window from the audio file via sounddevice + soundfile."""
     try:
         import sounddevice as sd
         import soundfile as sf
@@ -91,8 +96,11 @@ def play_audio(path: Path):
         print('  sounddevice not installed — run: pip install sounddevice')
         return
     try:
-        print(f'  Playing {path.name} ...')
-        data, sr = sf.read(str(path), dtype='float32', always_2d=True)
+        info = sf.info(str(path))
+        start = int(offset_sec * info.samplerate)
+        stop  = int((offset_sec + duration_sec) * info.samplerate)
+        print(f'  Playing {path.name} [{offset_sec:.1f}s – {offset_sec + duration_sec:.1f}s] ...')
+        data, sr = sf.read(str(path), start=start, stop=stop, dtype='float32', always_2d=True)
         sd.play(data, sr)
         sd.wait()
     except Exception as e:
@@ -148,7 +156,8 @@ def interactive_browser(
         top_idx = np.argsort(probs)[::-1]
         # top_idx = np.argsort(probs)[::-1][:100]
 
-        print(f'\n  File       : {row["filename"]}')
+        time_start = float(row.get('time_start', 0.0))
+        print(f'\n  File       : {row["filename"]}  @ {time_start:.1f}s')
         print(f'  True label : {gt_primary}' +
               (f'  (secondary: {", ".join(gt_secondary)})' if gt_secondary else ''))
         # print(f'  Top-5 predictions (threshold={threshold}):')
@@ -180,7 +189,7 @@ def interactive_browser(
                 print()
                 break
             if play == 'y':
-                play_audio(audio_path)
+                play_audio(audio_path, offset_sec=time_start)
         else:
             print(f'  Audio file not found: {audio_path}')
 
@@ -195,22 +204,27 @@ def main():
     enc = LabelEncoder(f'{cfg.paths.data_root}/taxonomy.csv')
 
     # --- Reproduce the same val split as training ---
-    train_csv = f'{cfg.paths.data_root}/train.csv'
-    full_df   = pd.read_csv(train_csv)
-    n_total   = len(full_df)
+    windows_csv = Path(args.windows_csv)
+    if not windows_csv.exists():
+        print(f'ERROR: {windows_csv} not found.')
+        print('Run:  python scripts/generate_clip_windows.py')
+        sys.exit(1)
+
+    full_df = pd.read_csv(windows_csv)
+    n_total = len(full_df)
     if args.max_clips:
         n_total = min(n_total, args.max_clips)
 
     val_idx = make_val_indices(n_total, args.val_split, cfg.training.seed)
     if args.n_eval_clips:
         if args.n_eval_clips >= len(val_idx):
-            print(f'  n_eval_clips ({args.n_eval_clips}) >= total val clips ({len(val_idx)}) — using all val clips.')
+            print(f'  n_eval_clips ({args.n_eval_clips}) >= total val windows ({len(val_idx)}) — using all.')
         else:
             val_idx = val_idx[:args.n_eval_clips]
-    print(f'Validation clips: {len(val_idx)}')
+    print(f'Validation windows: {len(val_idx)}')
 
     audio_root = Path(f'{cfg.paths.data_root}/train_audio')
-    val_ds     = ClipDataset(train_csv, str(audio_root), enc, cfg.audio, indices=val_idx)
+    val_ds     = ClipDataset(str(windows_csv), str(audio_root), enc, cfg.audio, indices=val_idx)
     val_loader = DataLoader(
         val_ds,
         batch_size=cfg.training.batch_size,
