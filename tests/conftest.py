@@ -96,4 +96,5 @@ def model(fast_model_cfg) -> Rcnnsed:
 TAXONOMY_PATH = "data/birdclef-2026/taxonomy.csv"
 TRAIN_CSV = "data/birdclef-2026/train.csv"
 TRAIN_AUDIO_ROOT = "data/birdclef-2026/train_audio"
+WINDOWS_CSV = "cache/train_clip_windows.csv"
 SOUNDSCAPE_PATH = "data/birdclef-2026/train_soundscapes/BC2026_Train_0001_S08_20250606_030007.ogg"

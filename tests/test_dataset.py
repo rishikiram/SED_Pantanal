@@ -2,15 +2,21 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
-from tests.conftest import TRAIN_CSV, TRAIN_AUDIO_ROOT
+from tests.conftest import WINDOWS_CSV, TRAIN_AUDIO_ROOT
+
+windows_csv_exists = pytest.mark.skipif(
+    not __import__('pathlib').Path(WINDOWS_CSV).exists(),
+    reason=f'{WINDOWS_CSV} not found — run scripts/generate_clip_windows.py first',
+)
 
 
 @pytest.mark.slow
+@windows_csv_exists
 class TestClipDataset:
     @pytest.fixture(scope="class")
     def dataset(self, cfg, encoder):
         from src.data.clip_dataset import ClipDataset
-        return ClipDataset(TRAIN_CSV, TRAIN_AUDIO_ROOT, encoder, cfg.audio, indices=list(range(8)))
+        return ClipDataset(WINDOWS_CSV, TRAIN_AUDIO_ROOT, encoder, cfg.audio, indices=list(range(8)))
 
     def test_length(self, dataset):
         assert len(dataset) == 8

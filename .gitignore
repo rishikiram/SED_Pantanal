@@ -2,3 +2,4 @@ data/birdclef-2026
 .vscode/
 .pytest_cache/
 __pycache__/
+outputs/

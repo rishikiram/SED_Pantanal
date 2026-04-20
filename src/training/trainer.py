@@ -1,3 +1,5 @@
+import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -92,6 +94,7 @@ class Trainer:
         backbone_lr_multiplier: float = 0.1,
         checkpoint_dir: str | None = None,
         fold: int = 0,
+        log_path: str | None = None,
     ):
         backbone_lr = lr * backbone_lr_multiplier
         optimizer = self._make_optimizer(lr, backbone_lr)
@@ -103,21 +106,52 @@ class Trainer:
             ckpt_dir = Path(checkpoint_dir)
             ckpt_dir.mkdir(parents=True, exist_ok=True)
 
+        n_train = len(train_loader.dataset)
+
         for epoch in range(num_epochs):
+            t0 = time.perf_counter()
             train_loss = self.train_epoch(train_loader, optimizer, epoch_desc=f'Train {epoch+1}/{num_epochs}')
+            epoch_sec = time.perf_counter() - t0
             scheduler.step()
+
+            lr_head = optimizer.param_groups[1]['lr']
+            lr_backbone = optimizer.param_groups[0]['lr']
+            samples_per_sec = n_train / epoch_sec
+
+            log_entry: dict = {
+                'epoch': epoch + 1,
+                'train_loss': round(train_loss, 6),
+                'epoch_sec': round(epoch_sec, 2),
+                'samples_per_sec': round(samples_per_sec, 1),
+                'lr_head': lr_head,
+                'lr_backbone': lr_backbone,
+            }
 
             if val_loader is not None:
                 val_loss, val_f1 = self.eval_epoch(val_loader)
-                print(f'Epoch {epoch+1}/{num_epochs}  train={train_loss:.4f}  val={val_loss:.4f}  f1={val_f1:.4f}')
+                log_entry['val_loss'] = round(val_loss, 6)
+                log_entry['val_f1'] = round(val_f1, 6)
+                print(
+                    f'Epoch {epoch+1}/{num_epochs}'
+                    f'  train={train_loss:.4f}  val={val_loss:.4f}  f1={val_f1:.4f}'
+                    f'  {samples_per_sec:.0f} samp/s  {epoch_sec:.1f}s'
+                )
                 if val_f1 > best_f1:
                     best_f1 = val_f1
                     if ckpt_dir:
                         torch.save(self.model.state_dict(), ckpt_dir / f'best_fold{fold}.pt')
             else:
-                print(f'Epoch {epoch+1}/{num_epochs}  train={train_loss:.4f}')
+                print(
+                    f'Epoch {epoch+1}/{num_epochs}'
+                    f'  train={train_loss:.4f}'
+                    f'  {samples_per_sec:.0f} samp/s  {epoch_sec:.1f}s'
+                )
 
             if ckpt_dir:
                 torch.save(self.model.state_dict(), ckpt_dir / f'epoch{epoch+1}_fold{fold}.pt')
+
+            if log_path:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps(log_entry) + '\n')
 
         return best_f1

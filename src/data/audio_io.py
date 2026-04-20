@@ -3,12 +3,25 @@ import torch
 import torchaudio
 
 
-def load_audio(path: str, target_sr: int = 32000) -> torch.Tensor:
+def load_audio(
+    path: str,
+    target_sr: int = 32000,
+    offset_sec: float = 0.0,
+    duration_sec: float | None = None,
+) -> torch.Tensor:
     """Load audio file, resample to target_sr, downmix to mono.
+
+    offset_sec: start position in seconds (seeks without loading preceding audio)
+    duration_sec: how many seconds to read; None means read to end of file
 
     Returns: (1, N) float32 waveform tensor.
     """
-    data, sr = sf.read(path, dtype='float32', always_2d=True)  # (N, C)
+    info = sf.info(path)
+    native_sr = info.samplerate
+    start = int(offset_sec * native_sr)
+    stop = int((offset_sec + duration_sec) * native_sr) if duration_sec is not None else None
+
+    data, sr = sf.read(path, start=start, stop=stop, dtype='float32', always_2d=True)  # (N, C)
     waveform = torch.from_numpy(data.T)                         # (C, N)
     if sr != target_sr:
         waveform = torchaudio.functional.resample(waveform, sr, target_sr)
