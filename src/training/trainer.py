@@ -85,6 +85,30 @@ class Trainer:
         f1 = segment_f1(probs_np, labels_np)
         return total_loss / len(loader), f1
 
+    @staticmethod
+    def load_checkpoint(path: str, model: 'Rcnnsed', device: torch.device) -> dict:
+        """Load a checkpoint and restore model weights. Returns the full checkpoint dict."""
+        ckpt = torch.load(path, map_location=device, weights_only=True)
+        model.load_state_dict(ckpt['model'])
+        return ckpt
+
+    def _save_checkpoint(
+        self,
+        path: Path,
+        epoch: int,
+        optimizer: torch.optim.Optimizer,
+        scheduler: torch.optim.lr_scheduler.LRScheduler,
+        best_f1: float,
+    ):
+        torch.save({
+            'epoch': epoch,
+            'model': self.model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'scheduler': scheduler.state_dict(),
+            'scaler': self.scaler.state_dict(),
+            'best_f1': best_f1,
+        }, path)
+
     def fit(
         self,
         train_loader: DataLoader,
@@ -95,12 +119,25 @@ class Trainer:
         checkpoint_dir: str | None = None,
         fold: int = 0,
         log_path: str | None = None,
+        resume_checkpoint: str | None = None,
     ):
         backbone_lr = lr * backbone_lr_multiplier
         optimizer = self._make_optimizer(lr, backbone_lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=5, T_mult=2)
 
         best_f1 = 0.0
+        start_epoch = 0
+
+        if resume_checkpoint:
+            ckpt = torch.load(resume_checkpoint, map_location=self.device, weights_only=True)
+            self.model.load_state_dict(ckpt['model'])
+            optimizer.load_state_dict(ckpt['optimizer'])
+            scheduler.load_state_dict(ckpt['scheduler'])
+            self.scaler.load_state_dict(ckpt['scaler'])
+            start_epoch = ckpt['epoch'] + 1
+            best_f1 = ckpt['best_f1']
+            print(f'Resumed from {resume_checkpoint}  (epoch {ckpt["epoch"]+1}, best_f1={best_f1:.4f})')
+
         ckpt_dir = None
         if checkpoint_dir:
             ckpt_dir = Path(checkpoint_dir)
@@ -108,7 +145,7 @@ class Trainer:
 
         n_train = len(train_loader.dataset)
 
-        for epoch in range(num_epochs):
+        for epoch in range(start_epoch, num_epochs):
             t0 = time.perf_counter()
             train_loss = self.train_epoch(train_loader, optimizer, epoch_desc=f'Train {epoch+1}/{num_epochs}')
             epoch_sec = time.perf_counter() - t0
@@ -139,7 +176,9 @@ class Trainer:
                 if val_f1 > best_f1:
                     best_f1 = val_f1
                     if ckpt_dir:
-                        torch.save(self.model.state_dict(), ckpt_dir / f'best_fold{fold}.pt')
+                        self._save_checkpoint(
+                            ckpt_dir / f'best_fold{fold}.pt', epoch, optimizer, scheduler, best_f1
+                        )
             else:
                 print(
                     f'Epoch {epoch+1}/{num_epochs}'
@@ -148,7 +187,9 @@ class Trainer:
                 )
 
             if ckpt_dir:
-                torch.save(self.model.state_dict(), ckpt_dir / f'epoch{epoch+1}_fold{fold}.pt')
+                self._save_checkpoint(
+                    ckpt_dir / f'epoch{epoch+1}_fold{fold}.pt', epoch, optimizer, scheduler, best_f1
+                )
 
             if log_path:
                 with open(log_path, 'a') as f:

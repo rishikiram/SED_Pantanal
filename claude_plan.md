@@ -179,6 +179,44 @@ Phase A (clip pre-training) is implemented in `scripts/train.py`. After 5 epochs
 - Each row = one 5s window; multiple rows per source clip
 - Evaluate whether mel caching (`cache/mels/clips/`) is needed for throughput
 
+### ~~Resume Training from Checkpoint~~ ✓ Done
+
+Allow `scripts/train.py --resume <checkpoint>` to continue training from a saved epoch, restoring all training state exactly.
+
+**What needs saving beyond `model.state_dict()`:**
+- `optimizer.state_dict()` — momentum/Adam moments; without this LR warmup restarts from scratch
+- `scheduler.state_dict()` — cosine schedule position; without this LR resets to epoch-1 value
+- `scaler.state_dict()` — AMP loss scale; safe to drop but cheap to save
+- `epoch` — which epoch we just completed, so the next run starts at `epoch + 1`
+- `best_f1` — so checkpoint promotion logic keeps working correctly
+
+**New checkpoint format** — switch from saving bare `model.state_dict()` to a dict:
+```python
+{
+    'epoch': epoch,           # 0-indexed epoch just completed
+    'model': model.state_dict(),
+    'optimizer': optimizer.state_dict(),
+    'scheduler': scheduler.state_dict(),
+    'scaler': scaler.state_dict(),
+    'best_f1': best_f1,
+}
+```
+Both `best_fold{k}.pt` and `epoch{n}_fold{k}.pt` use this format.
+
+**Implementation — two files:**
+
+`src/training/trainer.py`:
+- `fit()`: change `torch.save(model.state_dict(), ...)` to save the full dict above
+- Add `resume_checkpoint: str | None = None` param to `fit()`
+- At the start of `fit()`, if `resume_checkpoint` is set: load the dict, call `load_state_dict` on model/optimizer/scheduler/scaler, set `start_epoch = ckpt['epoch'] + 1` and `best_f1 = ckpt['best_f1']`; the epoch loop becomes `for epoch in range(start_epoch, num_epochs)`
+- Add a `load_checkpoint(path, model, device) -> dict` staticmethod for use outside `fit()` (e.g. `evaluate_val.py`)
+
+`scripts/train.py`:
+- Add `--resume <path>` arg; pass it through to `trainer.fit()`
+- Print a clear message when resuming: `Resuming from epoch N, best_f1=X`
+
+**Backward compatibility**: `evaluate_val.py` currently calls `torch.load(...); model.load_state_dict(state)`. After this change `state` will be a dict. Update it to use `state['model']` (or the new `load_checkpoint` helper).
+
 ### Phase 2 — Soundscape Fine-tuning + CV
 
 Goal: Phase B fine-tuning on labeled soundscape windows; proper cross-validated evaluation.

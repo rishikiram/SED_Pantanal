@@ -236,8 +236,8 @@ def main():
     # --- Load model ---
     model = Rcnnsed(cfg.model)
     ckpt_path = Path(args.checkpoint)
-    state = torch.load(ckpt_path, map_location=device, weights_only=True)
-    model.load_state_dict(state)
+    from src.training.trainer import Trainer as _Trainer
+    _Trainer.load_checkpoint(str(ckpt_path), model, device)
     model.to(device)
     print(f'Loaded checkpoint: {ckpt_path}')
 

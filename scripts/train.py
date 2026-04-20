@@ -42,6 +42,8 @@ def parse_args():
     p.add_argument('--max_clips',  type=int,   default=None, help='Cap dataset size (for quick runs)')
     p.add_argument('--num_workers',   type=int,   default=0)
     p.add_argument('--checkpoint_dir', default=None, help='Where to save checkpoints (default: outputs/checkpoints)')
+    p.add_argument('--resume', default=None, metavar='CHECKPOINT',
+                   help='Path to a checkpoint to resume training from')
     return p.parse_args()
 
 
@@ -162,6 +164,7 @@ def main():
         checkpoint_dir=checkpoint_dir,
         fold=0,
         log_path=log_path,
+        resume_checkpoint=args.resume,
     )
 
     # --- Final validation pass ---
