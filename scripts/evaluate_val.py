@@ -25,7 +25,7 @@ from tqdm import tqdm
 
 from src.config import load_config
 from src.data.clip_dataset import ClipDataset
-from src.evaluation.metrics import segment_f1
+from src.evaluation.metrics import macro_roc_auc, segment_f1
 from src.models.rcnn_sed import Rcnnsed
 from src.training.losses import FocalBCELoss
 from src.utils.label_encoder import LabelEncoder
@@ -61,8 +61,8 @@ def run_eval(
     loader: DataLoader,
     loss_fn: FocalBCELoss,
     device: torch.device,
-) -> tuple[float, float, np.ndarray, np.ndarray]:
-    """Returns (val_loss, val_f1, all_probs (N,234), all_labels (N,234))."""
+) -> tuple[float, float, float, np.ndarray, np.ndarray]:
+    """Returns (val_loss, val_f1, val_auc, all_probs (N,234), all_labels (N,234))."""
     model.eval()
     total_loss = 0.0
     all_probs, all_labels = [], []
@@ -84,7 +84,8 @@ def run_eval(
     probs_np  = np.concatenate(all_probs,  axis=0)          # (N, 234)
     labels_np = np.concatenate(all_labels, axis=0)          # (N, 234)
     f1        = segment_f1(probs_np, labels_np)
-    return total_loss / len(loader), f1, probs_np, labels_np
+    auc       = macro_roc_auc(probs_np, labels_np)
+    return total_loss / len(loader), f1, auc, probs_np, labels_np
 
 
 def play_audio(path: Path, offset_sec: float = 0.0, duration_sec: float = 5.0):
@@ -243,11 +244,12 @@ def main():
 
     # --- Evaluate ---
     loss_fn = FocalBCELoss(gamma=cfg.training.focal_gamma)
-    val_loss, val_f1, probs_np, labels_np = run_eval(model, val_loader, loss_fn, device)
+    val_loss, val_f1, val_auc, probs_np, labels_np = run_eval(model, val_loader, loss_fn, device)
 
     print(f'\n{"="*50}')
     print(f'  val_loss : {val_loss:.4f}')
     print(f'  val_f1   : {val_f1:.4f}  (threshold={args.threshold})')
+    print(f'  val_auc  : {val_auc:.4f}  (macro ROC-AUC)')
     print(f'{"="*50}')
 
     try:
