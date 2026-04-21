@@ -13,7 +13,9 @@ class Predictor:
     def __init__(self, cfg: Config, checkpoint_path: str, device: torch.device):
         self.cfg = cfg
         self.device = device
-        self.model = Rcnnsed(cfg.model)
+        import dataclasses
+        model_cfg = dataclasses.replace(cfg.model, backbone_pretrained=False)
+        self.model = Rcnnsed(model_cfg)
         load_checkpoint(checkpoint_path, self.model, device)
         self.model.to(device).eval()
 

@@ -26,9 +26,10 @@ from tqdm import tqdm
 IN_KAGGLE = Path('/kaggle/input').exists()
 
 if IN_KAGGLE:
-    sys.path.insert(0, '/kaggle/input/birdclef2026-source')
+    KAGGLE_SOURCE   = Path('/kaggle/input/models/rishiyang/sed-lemonjar-v1/pytorch/default/1')
+    sys.path.insert(0, str(KAGGLE_SOURCE))
     DATA_ROOT       = Path('/kaggle/input/birdclef-2026')
-    CHECKPOINT_DIR  = Path('/kaggle/input/birdclef2026-checkpoints')
+    CHECKPOINT_DIR  = KAGGLE_SOURCE / 'weights'
     OUTPUT_PATH     = Path('/kaggle/working/submission.csv')
 else:
     # Local paths — adjust CHECKPOINT_DIR if needed
@@ -60,11 +61,6 @@ else:
     # Inline config for Kaggle (matches configs/base.yaml)
     import yaml
     _yaml_str = """
-paths:
-  data_root: /kaggle/input/birdclef-2026
-  cache_dir: /kaggle/working/cache
-  output_dir: /kaggle/working/outputs
-
 audio:
   sample_rate: 32000
   window_duration: 5.0

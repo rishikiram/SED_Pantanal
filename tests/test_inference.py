@@ -7,6 +7,63 @@ from tests.conftest import SOUNDSCAPE_PATH
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def temp_checkpoint(tmp_path, fast_model_cfg):
+    """Save an untrained model in the current checkpoint format to a temp file."""
+    from src.models.rcnn_sed import Rcnnsed
+    model = Rcnnsed(fast_model_cfg)
+    path = str(tmp_path / 'test_checkpoint.pt')
+    torch.save({'epoch': 0, 'model': model.state_dict(),
+                'optimizer': {}, 'scheduler': {}, 'scaler': {}, 'best_f1': 0.0}, path)
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Predictor — fast (temp checkpoint, no audio I/O)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.fast
+def test_predictor_init(cfg, temp_checkpoint):
+    from src.inference.predictor import Predictor
+    device = torch.device('cpu')
+    p = Predictor(cfg, temp_checkpoint, device)
+    assert not p.model.training, "Model should be in eval mode after Predictor.__init__"
+
+
+@pytest.mark.slow
+def test_predictor_output_shape(cfg, temp_checkpoint):
+    from src.inference.predictor import Predictor
+    device = torch.device('cpu')
+    p = Predictor(cfg, temp_checkpoint, device)
+    probs = p.predict(SOUNDSCAPE_PATH)
+    assert isinstance(probs, np.ndarray)
+    assert probs.ndim == 2
+    assert probs.shape[1] == cfg.model.num_classes
+    assert probs.shape[0] >= 1   # at least one window
+
+
+@pytest.mark.slow
+def test_predictor_output_is_probabilities(cfg, temp_checkpoint):
+    from src.inference.predictor import Predictor
+    p = Predictor(cfg, temp_checkpoint, torch.device('cpu'))
+    probs = p.predict(SOUNDSCAPE_PATH)
+    assert probs.min() >= 0.0
+    assert probs.max() <= 1.0
+
+
+@pytest.mark.slow
+def test_predictor_is_deterministic(cfg, temp_checkpoint):
+    from src.inference.predictor import Predictor
+    p = Predictor(cfg, temp_checkpoint, torch.device('cpu'))
+    probs1 = p.predict(SOUNDSCAPE_PATH)
+    probs2 = p.predict(SOUNDSCAPE_PATH)
+    np.testing.assert_array_equal(probs1, probs2)
+
+
+# ---------------------------------------------------------------------------
 # transform_and_slide_window — slow (loads real audio)
 # ---------------------------------------------------------------------------
 
