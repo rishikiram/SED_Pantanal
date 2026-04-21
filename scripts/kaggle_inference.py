@@ -113,7 +113,7 @@ print(f'Checkpoint: {checkpoint.name}')
 
 from src.inference.predictor import Predictor
 
-predictor = Predictor(cfg, [str(checkpoint)], device)
+predictor = Predictor(cfg, str(checkpoint), device)
 print('Model loaded.')
 
 # =============================================================================

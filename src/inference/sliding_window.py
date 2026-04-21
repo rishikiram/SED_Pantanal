@@ -5,16 +5,16 @@ from src.data.mel_transform import MelTransform
 
 
 def sliding_window(audio_path: str, cfg: AudioConfig) -> torch.Tensor:
-    """Slice a 60s soundscape into 12 non-overlapping 5s mel windows.
+    """Slice a soundscape into non-overlapping 5s mel windows.
 
-    Returns: (12, 1, n_mels, frames_per_window)
+    Returns: (n_windows, 1, n_mels, frames_per_window)
     """
     transform = MelTransform(cfg)
     samples = cfg.samples_per_window                     # 160000
     waveform = load_audio(audio_path, cfg.sample_rate)   # (1, N)
 
     total_samples = waveform.shape[-1]
-    num_windows = int(cfg.sample_rate * 60) // samples   # 12 for 60s audio
+    num_windows = max(1, total_samples // samples) # given 32kHz and 160k sample_per_window, this gives 5s windows
 
     windows = []
     for i in range(num_windows):
