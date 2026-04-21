@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from src.config import Config
-from src.inference.sliding_window import sliding_window
+from src.inference.transform_and_slide_window import transform_and_slide_window
 from src.models.rcnn_sed import Rcnnsed
 from src.utils.checkpoint import load_checkpoint
 
@@ -23,7 +23,7 @@ class Predictor:
 
         Returns: (12, num_classes) probability matrix.
         """
-        windows = sliding_window(audio_path, self.cfg.audio)   # (12, 1, 128, 500)
+        windows = transform_and_slide_window(audio_path, self.cfg.audio)   # (12, 1, 128, 500)
         batch = windows.to(self.device)
         logits = self.model(batch)                              # (12, T', num_classes)
         probs = torch.sigmoid(logits).mean(dim=1)              # (12, num_classes)

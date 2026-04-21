@@ -7,27 +7,27 @@ from tests.conftest import SOUNDSCAPE_PATH
 
 
 # ---------------------------------------------------------------------------
-# sliding_window — slow (loads real audio)
+# transform_and_slide_window — slow (loads real audio)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
-def test_sliding_window_shape(cfg):
-    from src.inference.sliding_window import sliding_window
-    windows = sliding_window(SOUNDSCAPE_PATH, cfg.audio)
+def test_transform_and_slide_window_shape(cfg):
+    from src.inference.transform_and_slide_window import transform_and_slide_window
+    windows = transform_and_slide_window(SOUNDSCAPE_PATH, cfg.audio)
     assert windows.shape == (12, 1, 128, 500)
 
 
 @pytest.mark.slow
-def test_sliding_window_dtype(cfg):
-    from src.inference.sliding_window import sliding_window
-    windows = sliding_window(SOUNDSCAPE_PATH, cfg.audio)
+def test_transform_and_slide_window_dtype(cfg):
+    from src.inference.transform_and_slide_window import transform_and_slide_window
+    windows = transform_and_slide_window(SOUNDSCAPE_PATH, cfg.audio)
     assert windows.dtype == torch.float32
 
 
 @pytest.mark.slow
-def test_sliding_windows_are_normalised(cfg):
-    from src.inference.sliding_window import sliding_window
-    windows = sliding_window(SOUNDSCAPE_PATH, cfg.audio)
+def test_transform_and_slide_windows_are_normalised(cfg):
+    from src.inference.transform_and_slide_window import transform_and_slide_window
+    windows = transform_and_slide_window(SOUNDSCAPE_PATH, cfg.audio)
     # Each window is per-instance normalised — mean should be near 0
     for i in range(windows.shape[0]):
         mean = windows[i].mean().item()

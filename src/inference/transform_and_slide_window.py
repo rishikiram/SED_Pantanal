@@ -4,7 +4,7 @@ from src.data.audio_io import load_audio
 from src.data.mel_transform import MelTransform
 
 
-def sliding_window(audio_path: str, cfg: AudioConfig) -> torch.Tensor:
+def transform_and_slide_window(audio_path: str, cfg: AudioConfig) -> torch.Tensor:
     """Slice a soundscape into non-overlapping 5s mel windows.
 
     Returns: (n_windows, 1, n_mels, frames_per_window)

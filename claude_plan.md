@@ -69,7 +69,7 @@ SED_Pantanal/
 │   ├── evaluation/
 │   │   └── metrics.py           # segment-F1
 │   ├── inference/
-│   │   ├── sliding_window.py    # slice 60s audio into 12 non-overlapping 5s windows
+│   │   ├── transform_and_slide_window.py    # slice 60s audio into 12 non-overlapping 5s windows
 │   │   ├── predictor.py         # batch inference, 5-fold ensemble averaging
 │   │   └── postprocess.py       # per-class thresholding → submission CSV
 │   └── utils/
@@ -151,7 +151,7 @@ Phase A (clip pre-training) is implemented in `scripts/train.py`. After 5 epochs
 
 ## Inference Pipeline
 
-**`src/inference/sliding_window.py`**: slices 60s audio into 12 non-overlapping 5s windows.
+**`src/inference/transform_and_slide_window.py`**: slices 60s audio into 12 non-overlapping 5s windows.
 
 **`src/inference/predictor.py`**: `predict_soundscape(path) → (12, 234)` — stacks windows, runs model, mean-pools frame-level sigmoid outputs.
 
