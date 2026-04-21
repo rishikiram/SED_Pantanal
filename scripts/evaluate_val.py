@@ -237,8 +237,10 @@ def main():
     # --- Load model ---
     model = Rcnnsed(cfg.model)
     ckpt_path = Path(args.checkpoint)
-    from src.training.trainer import Trainer as _Trainer
-    _Trainer.load_checkpoint(str(ckpt_path), model, device)
+    # from os import path
+    # print(f"checkpoint path: {ckpt_path}   -   Is file?: {path.isfile(ckpt_path)}")
+    from src.utils.checkpoint import load_checkpoint
+    load_checkpoint(str(ckpt_path), model, device)
     model.to(device)
     print(f'Loaded checkpoint: {ckpt_path}')
 

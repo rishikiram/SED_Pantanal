@@ -11,6 +11,7 @@ from src.config import Config
 from src.evaluation.metrics import segment_f1
 from src.models.rcnn_sed import Rcnnsed
 from src.training.losses import FocalBCELoss, compute_class_weights
+from src.utils.checkpoint import load_checkpoint
 
 
 class Trainer:
@@ -85,13 +86,6 @@ class Trainer:
         f1 = segment_f1(probs_np, labels_np)
         return total_loss / len(loader), f1
 
-    @staticmethod
-    def load_checkpoint(path: str, model: 'Rcnnsed', device: torch.device) -> dict:
-        """Load a checkpoint and restore model weights. Returns the full checkpoint dict."""
-        ckpt = torch.load(path, map_location=device, weights_only=True)
-        model.load_state_dict(ckpt['model'])
-        return ckpt
-
     def _save_checkpoint(
         self,
         path: Path,
@@ -129,8 +123,7 @@ class Trainer:
         start_epoch = 0
 
         if resume_checkpoint:
-            ckpt = torch.load(resume_checkpoint, map_location=self.device, weights_only=True)
-            self.model.load_state_dict(ckpt['model'])
+            ckpt = load_checkpoint(resume_checkpoint, self.model, self.device)
             optimizer.load_state_dict(ckpt['optimizer'])
             scheduler.load_state_dict(ckpt['scheduler'])
             self.scaler.load_state_dict(ckpt['scaler'])
